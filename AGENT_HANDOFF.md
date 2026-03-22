@@ -15,7 +15,6 @@ This document captures the current implementation status, verified fixes, run co
 - Use conda environment `wote` for Python tasks.
 - Do not modify user dataset location manually; fix script/config paths instead.
 - Keep README-based execution flow.
-- Always respond in Chinese-simplified.
 
 ## What has been fixed (across all sessions)
 - Removed machine-specific absolute paths and made scripts root-relative:
@@ -42,33 +41,42 @@ This document captures the current implementation status, verified fixes, run co
 - **Dataset structure**: navsim_logs (test: 147 logs, trainval), sensor_blobs, maps all in place.
 - **Environment**: conda env `wote`, env vars in `~/.bashrc`, 3× NVIDIA RTX 6000 Ada (48GB each), 96 CPUs.
 
-## Current blocker — MISSING TEST CAMERA DATA
+## Current blocker — TEST SENSOR DATA INCOMPLETE
 
-**Root cause of eval failure (95% scenario failure rate):**
-- `dataset/sensor_blobs/test/` 每个场景只有 `MergedPointCloud/`（LiDAR），缺少相机目录 (`CAM_F0`, `CAM_L0`, `CAM_R0` 等)。
-- WoTE 模型推理需要相机图像，因此评估时绝大多数场景抛出异常。
-- 对比 `dataset/sensor_blobs/trainval/` 有完整的 8 个相机目录 + LiDAR。
+**Root cause of eval failure:**
+- WoTE inference requires 3 cameras (`CAM_F0`, `CAM_L0`, `CAM_R0`) + LiDAR (`MergedPointCloud`).
+- See `build_tfu_sensors` in `navsim/common/dataclasses.py`: only loads these 3 cameras + LiDAR.
+- Scenes missing camera data throw `FileNotFoundError` and are marked `valid=False`.
 
-**部分下载状态：**
-- `openscene-v1.1/sensor_blobs/test/` 已有 31 个场景的相机数据（来自 split 3），尚未合并到 `dataset/sensor_blobs/test/`。
-- 下载脚本：`download/download_test_missing.sh`（循环下载 0-31 共 32 个 split 的 `openscene_sensor_test_camera_*.tgz`）。
+**Download script updated:**
+- `download/download_test.sh` is now parameterized: `bash download/download_test.sh <NUM_SPLITS>`
+  - Default downloads all 32 splits; pass a number for partial (e.g. `bash download/download_test.sh 5`).
+  - Supports resume via marker files (`.camera_split_X_done` / `.lidar_split_X_done`).
+  - Downloads one split at a time: download → extract → rsync merge → delete tgz to minimize disk usage.
+  - Uses `pigz` (parallel gzip) for extraction instead of single-threaded `gzip` — leverages all 96 CPUs.
+  - Data merges directly into `dataset/navsim_logs/test/` and `dataset/sensor_blobs/test/`.
 
-**磁盘空间警告：**
-- 磁盘总 3.5TB，已用 3.2TB，仅剩 ~102GB。
-- 完整 test 相机数据预估 ~150GB+，空间可能不足。
-- 策略：逐个 split 下载→提取→合并→删除 tgz，最小化临时空间需求。
+**Current download status (2026-03-22):**
+- User deleted old `dataset/sensor_blobs/test/` (LiDAR-only), freeing ~150GB.
+- Ran `bash download/download_test.sh 5` to download first 5 splits (camera + lidar).
+- `openscene-v1.1/` may still contain partial data (41GB, from split 3).
+- Disk space: ~245GB available.
+
+**Partial-data eval in progress:**
+- Eval running in terminal 6 (`bash ./scripts/evaluation/eval_wote.sh`).
+- Progress ~68% (65/96 Ray objects).
+- Scenes with camera data process normally; missing ones fail with `FileNotFoundError`.
+- Check `exp/eval/WoTE/default/*.csv` after completion for partial results.
 
 ## Required next actions
-1. **合并已有的部分相机数据**：`rsync -av openscene-v1.1/sensor_blobs/test/* dataset/sensor_blobs/test/` 然后 `rm -rf openscene-v1.1`。
-2. **下载剩余 test 相机 split（0-2, 4-31）**：修改 `download/download_test_missing.sh` 逐个下载、提取、合并、删除。
-3. **重新运行评估**：`conda run -n wote bash scripts/evaluation/eval_wote.sh`
-4. **确认最终分数**：检查 `exp/eval/WoTE/default/` 下是否生成 `.csv` 结果文件。
+1. **Wait for current eval to finish**: check `exp/eval/WoTE/default/*.csv` for results.
+2. **Download full test data**: `bash download/download_test.sh` (no args = all 32 splits).
+3. **Re-run full evaluation**: `conda run -n wote bash scripts/evaluation/eval_wote.sh`
+4. **Verify final scores**: compare against paper results PDMS=88.3.
 
-## Previous eval run details (2026-03-21)
-- Metric cache: OK — 69711 cached, metadata CSV generated.
-- Eval found 12146 test scenarios (not 0 anymore), but 11500 failed due to missing camera data.
-- No CSV result file was generated (eval did not complete successfully).
-- Worker logs at `exp/eval/WoTE/default/logs/` (475 files).
+## Eval run history
+- **2026-03-21 (run 1)**: Metric cache OK, found 12146 scenarios, 11500 failed (no camera data), no CSV generated.
+- **2026-03-22 (run 2, in progress)**: Downloaded 5/32 splits, partial scenes have data. Running in terminal 6.
 
 ## Verify after rerun
 - `exp/eval/WoTE/default/*.csv` — final PDM scores

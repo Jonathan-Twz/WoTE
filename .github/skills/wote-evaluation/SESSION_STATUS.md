@@ -10,40 +10,36 @@ Last updated: 2026-03-22
 - Metric cache fully generated: 69711 features, metadata CSV at `exp/metric_cache/metadata/metric_cache_metadata_node_0.csv`.
 - K-means anchors (256) and formatted PDM scores generated.
 - Diagnosed eval failure root cause: missing test camera sensor data.
+- Updated `download/download_test.sh` with parameterized split count, resume support, correct target paths, and `pigz` parallel decompression.
 
 ## Runtime status snapshot
 - `k_means_trajs.py` was debugged and successfully produced 256-anchor outputs.
 - Evaluation launch path issues were fixed.
 - Metric cache generation completed successfully (2026-03-21, ~12.5 hours).
 - Evaluation found 12146 test scenarios (cache/split mismatch resolved).
-- **11500/12146 scenarios failed** due to missing camera images in `dataset/sensor_blobs/test/`.
-- No CSV result file generated — eval did not finish successfully.
+- User deleted old LiDAR-only `dataset/sensor_blobs/test/`, freeing ~150GB (now ~245GB free).
+- Downloaded 5/32 test splits (camera + lidar) via `bash download/download_test.sh 5`.
+- Partial-data eval running in terminal 6 (~68% progress). Most scenes still fail due to missing camera data.
 
 ## Root cause: Missing test camera data
-- `dataset/sensor_blobs/test/` only contains `MergedPointCloud/` (LiDAR), no camera directories.
-- WoTE needs `CAM_F0`, `CAM_B0`, `CAM_L0`, `CAM_L1`, `CAM_L2`, `CAM_R0`, `CAM_R1`, `CAM_R2`.
-- Partial download exists: `openscene-v1.1/sensor_blobs/test/` has 31 scenes with camera data (from split 3).
-- Download script: `download/download_test_missing.sh` (splits 0-31, only 1 completed).
-- Disk space constraint: only ~102GB free; full camera data ~150GB+.
+- WoTE only needs `CAM_F0`, `CAM_L0`, `CAM_R0` + `MergedPointCloud` (see `build_tfu_sensors` in `navsim/common/dataclasses.py`).
+- Scenes missing camera files throw `FileNotFoundError` at `dataclasses.py:68` and are marked `valid=False`.
 
 ## Required continuation
-1. Merge partial camera data: `rsync -av openscene-v1.1/sensor_blobs/test/* dataset/sensor_blobs/test/ && rm -rf openscene-v1.1`
-2. Download remaining test camera splits (0-2, 4-31) one at a time to conserve disk space.
-3. Re-run evaluation: `conda run -n wote bash scripts/evaluation/eval_wote.sh`
-4. Confirm non-zero scenario scoring and CSV result generation.
+1. Wait for current partial eval to finish; check `exp/eval/WoTE/default/*.csv`.
+2. Download full test data: `bash download/download_test.sh` (all 32 splits, resumes from split 5).
+3. Re-run full evaluation: `conda run -n wote bash scripts/evaluation/eval_wote.sh`
+4. Verify final scores against paper (PDMS=88.3).
 
 ## Canonical commands
 ```bash
 cd /home/wenzhe/wm_ws/WoTE
 
-# Step 1: merge existing partial camera data
-rsync -av openscene-v1.1/sensor_blobs/test/* dataset/sensor_blobs/test/
-rm -rf openscene-v1.1
+# Download test data (parameterized, resumes automatically)
+bash download/download_test.sh        # all 32 splits
+bash download/download_test.sh 5      # first 5 splits only
 
-# Step 2: download remaining camera data (modifies download_test_missing.sh as needed)
-bash download/download_test_missing.sh
-
-# Step 3: run evaluation
+# Run evaluation
 conda run -n wote bash scripts/evaluation/eval_wote.sh
 ```
 
@@ -52,14 +48,15 @@ conda run -n wote bash scripts/evaluation/eval_wote.sh
 - `exp/eval/WoTE/default/run_pdm_score.log` — eval main log
 - `exp/eval/WoTE/default/log.txt` — eval detailed log
 - `exp/eval/WoTE/default/*.csv` — final result (not yet generated)
-- `exp/eval/WoTE/default/logs/` — 475 per-worker logs from last run
+- `exp/eval/WoTE/default/logs/` — per-worker logs
 
 ## Hardware
 - 3× NVIDIA RTX 6000 Ada Generation (48GB VRAM each)
 - 96 CPUs
-- Disk: 3.5TB total, ~102GB free (97% used)
+- Disk: 3.5TB total, ~245GB free (after deleting old test LiDAR data)
 
 ## Decision notes
 - Keep script-level path fixes (root-relative + env fallback), do not hardcode host paths.
 - Prefer fixing orchestration scripts over editing dataset locations.
-- Download camera splits one-at-a-time (download→extract→merge→delete tgz) to manage disk space.
+- Download splits one-at-a-time (download → extract → merge → delete tgz) to manage disk space.
+- Use `pigz` (`tar -I pigz -xf`) for extraction to leverage all CPU cores; `pigz` is installed at `/usr/bin/pigz`.

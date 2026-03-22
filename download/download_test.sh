@@ -19,7 +19,7 @@ echo "==> Will download ${NUM_SPLITS}/32 splits (split 0..${MAX_SPLIT})"
 if [ ! -d "${DEST_LOGS}/test" ] || [ -z "$(ls -A "${DEST_LOGS}/test" 2>/dev/null)" ]; then
     echo "==> Downloading test metadata..."
     wget -q --show-progress "${HF_BASE}/openscene_metadata_test.tgz"
-    tar -xzf openscene_metadata_test.tgz
+    tar -I pigz -xf openscene_metadata_test.tgz
     rm openscene_metadata_test.tgz
     rsync -a "${STAGING}/meta_datas/test/" "${DEST_LOGS}/test/"
     echo "    Metadata done."
@@ -36,7 +36,7 @@ for split in $(seq 0 "${MAX_SPLIT}"); do
     fi
     echo "    Downloading camera split ${split}/${MAX_SPLIT}..."
     wget -q --show-progress "${HF_BASE}/openscene_sensor_test_camera/openscene_sensor_test_camera_${split}.tgz"
-    tar -xzf "openscene_sensor_test_camera_${split}.tgz"
+    tar -I pigz -xf "openscene_sensor_test_camera_${split}.tgz"
     rm "openscene_sensor_test_camera_${split}.tgz"
     rsync -a "${STAGING}/sensor_blobs/test/" "${DEST_SENSOR}/test/"
     rm -rf "${STAGING}/sensor_blobs/test"
@@ -53,7 +53,7 @@ for split in $(seq 0 "${MAX_SPLIT}"); do
     fi
     echo "    Downloading lidar split ${split}/${MAX_SPLIT}..."
     wget -q --show-progress "${HF_BASE}/openscene_sensor_test_lidar/openscene_sensor_test_lidar_${split}.tgz"
-    tar -xzf "openscene_sensor_test_lidar_${split}.tgz"
+    tar -I pigz -xf "openscene_sensor_test_lidar_${split}.tgz"
     rm "openscene_sensor_test_lidar_${split}.tgz"
     rsync -a "${STAGING}/sensor_blobs/test/" "${DEST_SENSOR}/test/"
     rm -rf "${STAGING}/sensor_blobs/test"
