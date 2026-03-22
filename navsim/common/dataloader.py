@@ -20,7 +20,15 @@ def filter_scenes(data_path: Path, scene_filter: SceneFilter) -> Dict[str, List[
     stop_loading: bool = False
 
     # filter logs
-    log_files = list(data_path.iterdir())
+    # Handle both direct pickle files and nested directory structures (trainval/trainval/)
+    log_files = []
+    for item in data_path.iterdir():
+        if item.is_file() and item.suffix == ".pkl":
+            log_files.append(item)
+        elif item.is_dir() and item.name in ["trainval", "test"]:
+            # Look for pickle files in nested directories
+            log_files.extend([f for f in item.iterdir() if f.is_file() and f.suffix == ".pkl"])
+    
     if scene_filter.log_names is not None:
         log_files = [
             log_file
@@ -146,12 +154,22 @@ class MetricCacheLoader:
 
     def _load_metric_cache_paths(self, cache_path: Path) -> Dict[str, Path]:
         metadata_dir = cache_path / "metadata"
-        metadata_file = [file for file in metadata_dir.iterdir() if ".csv" in str(file)][0]
-        with open(str(metadata_file), "r") as f:
-            cache_paths=f.read().splitlines()[1:]
+        metadata_files = [file for file in metadata_dir.iterdir() if ".csv" in str(file)] if metadata_dir.exists() else []
+
+        if metadata_files:
+            metadata_file = metadata_files[0]
+            with open(str(metadata_file), "r") as f:
+                cache_paths = f.read().splitlines()[1:]
+            metric_cache_dict = {
+                cache_path.split("/")[-2]: cache_path
+                for cache_path in cache_paths
+            }
+            return metric_cache_dict
+
+        metric_cache_files = cache_path.rglob(self._file_name)
         metric_cache_dict = {
-            cache_path.split("/")[-2]: cache_path
-            for cache_path in cache_paths
+            str(metric_cache_file.parent.name): str(metric_cache_file)
+            for metric_cache_file in metric_cache_files
         }
         return metric_cache_dict
 

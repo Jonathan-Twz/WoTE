@@ -1,13 +1,10 @@
-import os, json
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
 from matplotlib.cm import get_cmap
 
 import hydra
 from hydra.utils import instantiate
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
 from sklearn.cluster import MiniBatchKMeans
 
 from tqdm import tqdm
@@ -16,8 +13,7 @@ from navsim.common.dataclasses import SceneFilter, SensorConfig
 
 SPLIT = "trainval"  # ["mini", "test", "trainval"]
 FILTER = "navtrain"  # ["navtrain", "navtest", "all_scenes", ]
-num_poses = 8 # 0.5s * 8 = 4s
-# 定义 K-means 的聚类数目
+num_poses = 8  # 0.5s * 8 = 4s
 K = 256
 
 """
@@ -27,12 +23,21 @@ save navtrain future trajectories as numpy array
 hydra.initialize(config_path="../../navsim/planning/script/config/common/scene_filter")
 cfg = hydra.compose(config_name=FILTER)
 scene_filter: SceneFilter = instantiate(cfg)
-openscene_data_root = Path("/data2/yingyan_li/repo/WoTE//dataset/")
+project_root = Path(__file__).resolve().parents[2]
+openscene_data_root = project_root / "dataset"
+extra_data_dir = openscene_data_root / "extra_data" / "planning_vb"
+extra_data_dir.mkdir(parents=True, exist_ok=True)
+
+logs_path = openscene_data_root / "navsim_logs" / SPLIT
+if (logs_path / SPLIT).is_dir():
+        logs_path = logs_path / SPLIT
+
+sensor_blobs_path = openscene_data_root / "sensor_blobs" / SPLIT
 
 # 创建场景加载器
 scene_loader = SceneLoader(
-        openscene_data_root / f"navsim_logs/{SPLIT}",
-        openscene_data_root / f"sensor_blobs/{SPLIT}",
+        logs_path,
+        sensor_blobs_path,
         scene_filter,
         sensor_config=SensorConfig.build_no_sensors(),
         # sensor_config=SensorConfig.build_all_sensors(),
@@ -40,28 +45,26 @@ scene_loader = SceneLoader(
 
 future_trajectories_list = []  # 用于记录所有 future_trajectory
 
-# 并行遍历所有 tokens
-def process_token(token):
-        scene = scene_loader.get_scene_from_token(token)
-        future_trajectory = scene.get_future_trajectory(
-        num_trajectory_frames=num_poses,
-        ).poses
-        return future_trajectory
-
 print("Collecting future trajectories...")
 for token in tqdm(scene_loader.tokens):
         scene = scene_loader.get_scene_from_token(token)
         future_trajectory = scene.get_future_trajectory(
-                        num_trajectory_frames=num_poses, 
-                ).poses
+                num_trajectory_frames=num_poses,
+        ).poses
         future_trajectories_list.append(future_trajectory)
 
+if len(future_trajectories_list) == 0:
+        raise RuntimeError(
+                f"No trajectories were collected from logs path: {logs_path}. "
+                "Please verify split/filter settings and dataset contents."
+        )
+
 # save future_trajectories_list as numpy array
-numpy_path = f"future_trajectories_list_{SPLIT}_{FILTER}.npy"
+numpy_path = extra_data_dir / f"future_trajectories_list_{SPLIT}_{FILTER}.npy"
 np.save(numpy_path, future_trajectories_list)
 
 # load 
-future_trajectories_list = np.load("/data2/yingyan_li/repo/WoTE//extra_data/future_trajectories_list_trainval_navtrain.npy")
+future_trajectories_list = np.load(numpy_path)
 np.set_printoptions(suppress=True)
 # 将 future_trajectories_list 转换为 numpy 数组，并展平每条轨迹
 N = len(future_trajectories_list)
@@ -74,20 +77,20 @@ kmeans.fit(flattened_trajectories)
 
 # 获取每条轨迹的聚类标签和聚类中心
 labels = kmeans.labels_  # 每条轨迹对应的聚类标签
-trajectory_anchors = kmeans.trajectory_anchors_  # 聚类中心，形状为 (K, 24)
+trajectory_anchors = kmeans.cluster_centers_  # 聚类中心，形状为 (K, 24)
 
 
 # 将聚类中心转换回原始轨迹的形状 (8, 3)
 trajectory_anchors = trajectory_anchors.reshape(K, 8, 3)
 
 # save trajectory_anchors as numpy array
-numpy_path = f"/data2/yingyan_li/repo/WoTE//extra_data/planning_vb/trajectory_anchors_{K}.npy"
+numpy_path = extra_data_dir / f"trajectory_anchors_{K}.npy"
 np.save(numpy_path, trajectory_anchors)
 
 """"
 Visual code
 """
-numpy_path = f"/data2/yingyan_li/repo/WoTE//extra_data/planning_vb/trajectory_anchors_{K}.npy"
+numpy_path = extra_data_dir / f"trajectory_anchors_{K}.npy"
 trajectory_anchors = np.load(numpy_path)
 
 # Visualize all cluster centers on a single plot
@@ -103,11 +106,11 @@ ax.set_xlabel('X Position')
 ax.set_ylabel('Y Position')
 ax.grid(False)
 plt.tight_layout()
-plt.savefig(f'/data2/yingyan_li/repo/WoTE//extra_data/planning_vb/trajectory_anchors_{K}_no_grid.png')
+plt.savefig(extra_data_dir / f'trajectory_anchors_{K}_no_grid.png')
 
 # # save trajectory_anchors as numpy array
 # Load cluster centers data
-numpy_path = f"/data2/yingyan_li/repo/WoTE/extra_data/planning_vb/trajectory_anchors_{K}.npy"
+numpy_path = extra_data_dir / f"trajectory_anchors_{K}.npy"
 trajectory_anchors = np.load(numpy_path)
 
 # Create a figure for plotting
@@ -136,6 +139,9 @@ ax.grid(False)
 
 # Adjust layout and save the figure
 plt.tight_layout()
-plt.savefig(f'/data2/yingyan_li/repo/WoTE//vis/trajectory_anchors_{K}_highlighted_{highlight_idx}.png')
-print(f"Saved figure to /data2/yingyan_li/repo/WoTE//vis/trajectory_anchors_{K}_highlighted_{highlight_idx}.png")
+vis_dir = project_root / "vis"
+vis_dir.mkdir(parents=True, exist_ok=True)
+vis_path = vis_dir / f'trajectory_anchors_{K}_highlighted_{highlight_idx}.png'
+plt.savefig(vis_path)
+print(f"Saved figure to {vis_path}")
 

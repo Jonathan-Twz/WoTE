@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import List, Tuple, Dict
+from pathlib import Path
 
 from nuplan.common.maps.abstract_map import SemanticMapLayer
 from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
@@ -13,7 +14,8 @@ class WoTEConfig:
         time_horizon=4, interval_length=0.5
     )
 
-    resnet34_path = '/home/yingyan.li/repo/WoTE/ckpts/resnet34.pth'
+    _PROJECT_ROOT = Path(__file__).resolve().parents[4]
+    resnet34_path = str(_PROJECT_ROOT / 'ckpts/resnet34.pth')
     image_architecture: str = "resnet34"
     lidar_architecture: str = "resnet34"
 
@@ -123,9 +125,15 @@ class WoTEConfig:
     num_traj_anchor: int = 256
     
     use_sim_reward: bool = True
-    sim_reward_dict_path: str = f'/home/yingyan.li/repo/WoTE/dataset/extra_data/planning_vb/formatted_pdm_score_{num_traj_anchor}.npy'
-    cluster_file_path = f'/home/yingyan.li/repo/WoTE/dataset/extra_data/planning_vb/trajectory_anchors_{num_traj_anchor}.npy'
     num_plan_queries: int = 32
+    
+    @property
+    def sim_reward_dict_path(self) -> str:
+        return str(self._PROJECT_ROOT / f'dataset/extra_data/planning_vb/formatted_pdm_score_{self.num_traj_anchor}.npy')
+    
+    @property
+    def cluster_file_path(self) -> str:
+        return str(self._PROJECT_ROOT / f'dataset/extra_data/planning_vb/trajectory_anchors_{self.num_traj_anchor}.npy')
 
     # map loss
     input_target = True

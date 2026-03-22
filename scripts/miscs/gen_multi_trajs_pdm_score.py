@@ -37,13 +37,16 @@ from nuplan.planning.simulation.trajectory.trajectory_sampling import Trajectory
 
 logger = logging.getLogger(__name__)
 
-num_clusters = 128
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATASET_ROOT = PROJECT_ROOT / "dataset"
+
+num_clusters = 256
 num_horizons = 8
 compute_state_only = False
 if compute_state_only:
     print("Computing state only")
 
-CONFIG_PATH = "/home/yingyan.li/repo/WoTE/navsim/planning/script/config/pdm_scoring"
+CONFIG_PATH = str(PROJECT_ROOT / "navsim/planning/script/config/pdm_scoring")
 CONFIG_NAME = "default_run_pdm_score"
 @hydra.main(config_path=CONFIG_PATH, config_name=CONFIG_NAME)
 def main(cfg: DictConfig) -> None:
@@ -109,7 +112,8 @@ def format_and_save_ego_states(score_rows, num_clusters, output_dir):
         score_dict[key] = value
 
     # Save formatted score_rows using numpy
-    save_path = f'/data2/yingyan_li/repo/WoTE//simulated_ego_states_{num_clusters}_trainval.npy'
+    save_path = DATASET_ROOT / f'extra_data/planning_vb/simulated_ego_states_{num_clusters}_trainval.npy'
+    save_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(save_path, score_dict, allow_pickle=True)
 
 
@@ -133,7 +137,8 @@ def format_and_save_scores(score_rows, num_clusters, output_dir):
         score_dict[key] = value
 
     # Save formatted score_rows using numpy
-    save_path = f'/home/yingyan.li/repo/WoTE/dataset/extra_data/planning_vb/formatted_pdm_score_{num_clusters}.npy'
+    save_path = DATASET_ROOT / f'extra_data/planning_vb/formatted_pdm_score_{num_clusters}.npy'
+    save_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(save_path, score_dict, allow_pickle=True)
 
     print(f'Saved formatted scores to {save_path}')
@@ -234,7 +239,7 @@ def load_predefined_trajectories() -> List[Any]:
     Assumes that the trajectories are stored in a serialized format (e.g., pickle).
     """
 
-    path = f'/home/yingyan.li/repo/WoTE/dataset/extra_data/planning_vb/trajectory_anchors_{num_clusters}.npy'
+    path = DATASET_ROOT / f'extra_data/planning_vb/trajectory_anchors_{num_clusters}.npy'
     with open(path, "rb") as f:
         trajectories = np.load(f)
     return trajectories
