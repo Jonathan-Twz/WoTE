@@ -41,47 +41,76 @@ This document captures the current implementation status, verified fixes, run co
 - **Dataset structure**: navsim_logs (test: 147 logs, trainval), sensor_blobs, maps all in place.
 - **Environment**: conda env `wote`, env vars in `~/.bashrc`, 3× NVIDIA RTX 6000 Ada (48GB each), 96 CPUs.
 
-## Current blocker — TEST SENSOR DATA INCOMPLETE
+## Evaluation — FULLY REPRODUCED
 
-**Root cause of eval failure:**
-- WoTE inference requires 3 cameras (`CAM_F0`, `CAM_L0`, `CAM_R0`) + LiDAR (`MergedPointCloud`).
-- See `build_tfu_sensors` in `navsim/common/dataclasses.py`: only loads these 3 cameras + LiDAR.
-- Scenes missing camera data throw `FileNotFoundError` and are marked `valid=False`.
+**Final results (2026-03-22, full 32/32 splits, 12146/12146 scenarios):**
 
-**Download script updated:**
-- `download/download_test.sh` is now parameterized: `bash download/download_test.sh <NUM_SPLITS>`
+| Metric | Score | Paper | Match |
+|---|---|---|---|
+| No Collision (NC) | 98.5 | 98.5 | Exact |
+| Drivable Area (DAC) | 96.8 | 96.8 | Exact |
+| Ego Progress (EP) | 81.9 | 81.9 | Exact |
+| TTC | 94.9 | 94.9 | Exact |
+| Comfort | 100.0 | 99.9 | ~match |
+| **PDMS** | **88.3** | **88.3** | **Exact** |
+
+Result CSV: `exp/eval/WoTE/default/2026.03.22.20.55.30.csv`
+
+**Download script:**
+- `download/download_test.sh` is parameterized: `bash download/download_test.sh <NUM_SPLITS>`
   - Default downloads all 32 splits; pass a number for partial (e.g. `bash download/download_test.sh 5`).
   - Supports resume via marker files (`.camera_split_X_done` / `.lidar_split_X_done`).
-  - Downloads one split at a time: download → extract → rsync merge → delete tgz to minimize disk usage.
-  - Uses `pigz` (parallel gzip) for extraction instead of single-threaded `gzip` — leverages all 96 CPUs.
-  - Data merges directly into `dataset/navsim_logs/test/` and `dataset/sensor_blobs/test/`.
-
-**Current download status (2026-03-22):**
-- User deleted old `dataset/sensor_blobs/test/` (LiDAR-only), freeing ~150GB.
-- Ran `bash download/download_test.sh 5` to download first 5 splits (camera + lidar).
-- `openscene-v1.1/` may still contain partial data (41GB, from split 3).
-- Disk space: ~245GB available.
-
-**Partial-data eval in progress:**
-- Eval running in terminal 6 (`bash ./scripts/evaluation/eval_wote.sh`).
-- Progress ~68% (65/96 Ray objects).
-- Scenes with camera data process normally; missing ones fail with `FileNotFoundError`.
-- Check `exp/eval/WoTE/default/*.csv` after completion for partial results.
-
-## Required next actions
-1. **Wait for current eval to finish**: check `exp/eval/WoTE/default/*.csv` for results.
-2. **Download full test data**: `bash download/download_test.sh` (no args = all 32 splits).
-3. **Re-run full evaluation**: `conda run -n wote bash scripts/evaluation/eval_wote.sh`
-4. **Verify final scores**: compare against paper results PDMS=88.3.
+  - Uses `pigz` (parallel gzip) for extraction — leverages all 96 CPUs.
+  - Data merges directly into `dataset/sensor_blobs/test/`.
 
 ## Eval run history
-- **2026-03-21 (run 1)**: Metric cache OK, found 12146 scenarios, 11500 failed (no camera data), no CSV generated.
-- **2026-03-22 (run 2, in progress)**: Downloaded 5/32 splits, partial scenes have data. Running in terminal 6.
+- **2026-03-21 (run 1)**: Metric cache OK, 12146 scenarios, 11500 failed (no camera data), no CSV.
+- **2026-03-22 (run 2)**: 5/32 splits, 2252 valid, PDMS=88.1 (partial).
+- **2026-03-22 (run 3)**: 32/32 splits, 12146 valid, **PDMS=88.3** (exact match).
 
-## Verify after rerun
-- `exp/eval/WoTE/default/*.csv` — final PDM scores
-- `exp/eval/WoTE/default/run_pdm_score.log` — should end with "Finished running evaluation"
-- `exp/eval/WoTE/default/log.txt`
+---
+
+## Next goal — Latent World Model BEV Visualization
+
+Compare the world model's predicted BEV semantic map against the ground truth BEV.
+
+### BEV architecture summary
+
+- **GT BEV**: Built in `WoTE_targets.py` via `_compute_bev_semantic_map` — rasterizes HD map polygons, annotation boxes, and ego box using OpenCV onto a `(128, 256)` integer label grid (8 classes).
+- **Predicted BEV (current)**: Model outputs `bev_semantic_map` logits `(B, 8, 128, 256)` via `_process_map` in `WoTE_model.py` — BEV latent 8x8 upsampled through `BEVUpsampleHead` + `bev_semantic_head`.
+- **Predicted BEV (future)**: After `latent_world_model` (TransformerEncoder) updates BEV + ego tokens, decoded through the same head → `fut_bev_semantic_map` logits `(B, 8, 128, 256)`.
+- **Future GT BEV**: Same rasterization but with future annotations transformed to current ego frame, plus ego box at trajectory anchor pose.
+
+### 8 BEV semantic classes (`configs/default.py`)
+
+| Label | Meaning |
+|---|---|
+| 0 | Background |
+| 1 | Road (lane + intersection) |
+| 2 | Walkways |
+| 3 | Centerline |
+| 4 | Static objects (barrier, cone, sign) |
+| 5 | Vehicles |
+| 6 | Pedestrians |
+| 7 | Ego vehicle |
+
+### Key files for visualization
+
+| File | What to use |
+|---|---|
+| `navsim/agents/WoTE/WoTE_model.py` | `_process_map`, `_process_future_map`, `latent_world_model` |
+| `navsim/agents/WoTE/WoTE_targets.py` | `_compute_bev_semantic_map`, `_add_ego_box_to_bev_map` |
+| `navsim/agents/transfuser/transfuser_callback.py` | `semantic_map_to_rgb` (lines 145-165) — reusable colormap |
+| `navsim/visualization/bev.py` | Scene-level BEV plotting utilities |
+
+### Visualization plan
+
+1. Write a script that loads a scene via `SceneLoader`, builds features/targets via `WoTEFeatureBuilder`/`WoTETargetBuilder`.
+2. Load the checkpoint, run `forward_train` (needed to get both current and future BEV predictions; `forward_test` skips future BEV).
+3. Extract from predictions: `bev_semantic_map` (current) and `fut_bev_semantic_map` (future) — apply `argmax(dim=1)`.
+4. Extract from targets: `bev_semantic_map` and `fut_bev_semantic_map` (already integer labels).
+5. Convert to RGB using `semantic_map_to_rgb` or a custom colormap.
+6. Plot side-by-side: GT current vs predicted current, GT future vs predicted future.
 
 ## Known caveat
 - Repository may contain other unrelated changed files or large generated artifacts; do not assume they are part of this fix scope.

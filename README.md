@@ -99,6 +99,7 @@ Install dependencies:
 ```bash
 pip install -r requirements.txt
 pip install git+https://github.com/motional/nuplan-devkit.git@nuplan-devkit-v1.2#egg=nuplan-devkit
+pip install -e .
 ```
 
 Add environment variables to `~/.bashrc` (modify paths as needed):
